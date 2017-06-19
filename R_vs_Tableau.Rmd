@@ -1,0 +1,170 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(treemapify)
+library(ggthemes)
+library(scales)
+
+ggthemes::ggtheme(theme_bw)
+pf <- read_excel('Tableau 可视化分析争霸赛上海站 - 数据.xlsx')
+str(pf)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+
+```{r}
+summary(pf)
+```
+
+
+
+
+本次使用 R 来复现 2017 年 Tableau 上海站冠军 Young Lin 的作品，帮助大家对比两者的可视化能力。
+
+
+ggplot2 原生不支持 treemap。使用第3方工具 treemapify 来绘制。
+
+```{r}
+pf.industry <- pf %>% 
+  group_by(投资行业) %>% 
+  summarise(total.invest = sum(投资金额))
+
+```
+
+默认配色下，投资额越高，颜色越亮，与直觉不符。
+```{r treemap}
+
+p1 <- ggplot(pf.industry, aes(area = total.invest, fill = total.invest, label = 投资行业)) +
+  geom_treemap() 
+p1
+```
+
+```{r treemap update}
+p1 + scale_fill_continuous(low = '#c3e8df', high = '#467a9c',
+                           breaks = seq(10^10, 5*10^10, 10^10),
+                           labels = c("10B", "20B", "30B", "40B", "50B")) #重新设置标签
+```
+
+```{r bar.year.industry}
+pf.industry.year <- pf %>% 
+  mutate(invest.year = strftime(投资时间, "%Y")) %>%  # 将投资时间拆分出来
+  group_by(投资行业, invest.year) %>% 
+  summarise(total.invest = sum(投资金额))
+
+ggplot(pf.industry.year, aes(x = invest.year, y = total.invest, fill = 投资行业)) +
+  geom_bar(stat = 'identity') +
+  theme(text = element_text(family = 'PingFang SC Light')) # 显示中文
+```
+
+Tableau 饼图色块有问题，不应该选 sequential
+
+
+```{r bar.round.investor}
+pf.round.investor <- pf %>% 
+  mutate(投资轮次.组合 = ifelse(is.element(投资轮次, c('A+轮', 'A轮', 'Pre-A轮')), 'A轮',
+                         ifelse(is.element(投资轮次, c('B+轮', 'B轮')), 'B轮',
+                         ifelse(投资轮次 == 'C轮', 'C轮', 
+                         ifelse(投资轮次 == 'D轮', 'D轮', 
+                         ifelse(投资轮次 == '种子轮', '种子轮',
+                         ifelse(投资轮次 == 'E轮', 'E轮',
+                         ifelse(投资轮次 == '天使轮', '天使轮', 'other')))))))) %>% 
+  group_by(投资轮次.组合, 机构名称) %>% 
+  summarise(金额 = sum(投资金额)) %>% 
+  group_by(百分比 = 金额 / sum(金额))
+
+pf.round.investor$投资轮次.组合 <- factor(pf.round.investor$投资轮次.组合,
+                c('种子轮', '天使轮', 'A轮', 'B轮', 'C轮', 'D轮', 'E轮', 'other'))
+
+
+
+ggplot(pf.round.investor, aes(x = 投资轮次.组合, y = 百分比, fill = 机构名称)) +
+  geom_bar(stat = 'identity') +
+  scale_fill_brewer(type = 'div') +
+  theme(text = element_text(family = 'PingFang SC Light'))
+
+```
+
+
+Tableau 字体的颜色 黑色，白色
+
+可以快速调整 legend 的内容
+
+
+```{r heatmap.year.month}
+
+pf.year.month <- pf %>% 
+  select(投资时间, 投资金额) %>% 
+  mutate(年 = strftime(投资时间, '%Y'),
+         月 = strftime(投资时间, '%m')) %>% 
+  group_by(年, 月) %>% 
+  summarise(金额.总和 = sum(投资金额))
+
+
+
+ggplot(pf.year.month, aes(x = 月, y = 年)) +
+  geom_tile(aes(fill = 金额.总和)) +
+  theme(text = element_text(family = 'PingFang SC Light'))+
+  scale_fill_continuous(low = '#c3e8df', high = '#467a9c',
+                           breaks = seq(10^10, 5*10^10, 10^10),
+                           labels = c("10B", "20B", "30B", "40B", "50B")) #重新设置标签
+  
+
+
+```
+
+
+
+Tableau 有筛选下拉框
+
+Tableau 中可以自动把投资年份拆分出来。
+
+```{r}
+table(pf$投资轮次)
+```
+
+
+```{r bar.roi}
+pf.roi <- pf %>% 
+  mutate(投资轮次.组合 = 
+        ifelse(is.element(投资轮次, c('并购100%', '并购59%', '并购60%', '并购65%', '并购72%', '并购93%')),
+                              'M&A',
+        ifelse(is.element(投资轮次, c('并购','并购15%', '并购35%', '并购37%')), 'M&A < 50%',
+        ifelse(is.element(投资轮次, c('不明确', '战略投资')), 'Others',
+        ifelse(is.element(投资轮次, c('F轮-上市前', 'IPO上市', 'IPO上市后')), 'IPO', 'Seed'))))) %>%
+  group_by(投资轮次.组合, 投资行业) %>%
+  summarise(平均ROI = mean(回报率),
+            投资金额.汇总 = sum(投资金额)) #简单起见，直接取平均值
+
+pf.roi$投资轮次.组合 <- factor(pf.roi$投资轮次.组合, c('Seed', 'IPO', 'M&A', 'M&A < 50%', 'Others'))
+
+avg.roi <- mean(pf.roi$平均ROI)
+  
+ggplot(pf.roi, aes(x = 投资行业, y = 平均ROI)) +
+  geom_bar(stat = 'identity') +
+  scale_y_continuous(labels = percent) +
+  facet_grid(.~投资轮次.组合) +
+  geom_hline(yintercept = avg.roi, alpha = 0.3) +
+  coord_flip() +
+  theme(text = element_text(family = 'PingFang SC Light'))
+  
+```
+
+
+
+
+
+R 可以复现，Tableau 比较困难
+
+R可以直接导出 HTML，观看比较方便。
